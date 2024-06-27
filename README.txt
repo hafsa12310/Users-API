@@ -1,2 +1,0 @@
--run npm install first
--run npm run dev

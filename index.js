@@ -1,53 +1,133 @@
 const express = require('express');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const app = express();
-const port = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-let users = [];
-
-// Get all users
-app.get('/users', (req, res) => {
-  res.json(users);
+// MongoDB connection
+mongoose.connect('mongodb://localhost:27017/usersapi', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+}).then(() => {
+  console.log('Connected to MongoDB');
+}).catch((err) => {
+  console.error('Error connecting to MongoDB', err);
 });
 
-// Get user by ID
-app.get('/users/:id', (req, res) => {
-  const user = users.find(u => u.id === parseInt(req.params.id));
-  if (!user) return res.status(404).send('User not found');
-  res.json(user);
+
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true }
 });
 
-// Create new user
-app.post('/users', (req, res) => {
-  const user = {
-    id: users.length + 1,
+const User = mongoose.model('User', userSchema);
+
+
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token == null) return res.sendStatus(401);
+
+  jwt.verify(token, 'your_jwt_secret', (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
+// Register 
+app.post('/register', async (req, res) => {
+  try {
+    const hashedPassword = await bcrypt.hash(req.body.password, 10);
+    const user = new User({ name: req.body.name, email: req.body.email, password: hashedPassword });
+    const newUser = await user.save();
+    res.status(201).json(newUser);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// Login 
+app.post('/login', async (req, res) => {
+  const user = await User.findOne({ email: req.body.email });
+  if (!user) return res.status(400).json({ message: 'Cannot find user' });
+
+  try {
+    if (await bcrypt.compare(req.body.password, user.password)) {
+      const accessToken = jwt.sign({ _id: user._id }, 'your_jwt_secret', { expiresIn: '1h' });
+      res.json({ accessToken });
+    } else {
+      res.json({ message: 'Not allowed' });
+    }
+  } catch {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+app.get('/users', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+app.get('/users/:id', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+app.post('/users', authenticateToken, async (req, res) => {
+  const user = new User({
     name: req.body.name,
-    email: req.body.email
-  };
-  users.push(user);
-  res.status(201).json(user);
+    email: req.body.email,
+    password: await bcrypt.hash(req.body.password, 10) // Ensure the password is hashed
+  });
+  try {
+    const newUser = await user.save();
+    res.status(201).json(newUser);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
 });
 
-// Update user by ID
-app.put('/users/:id', (req, res) => {
-  const user = users.find(u => u.id === parseInt(req.params.id));
-  if (!user) return res.status(404).send('User not found');
 
-  user.name = req.body.name || user.name;
-  user.email = req.body.email || user.email;
-  res.json(user);
+app.put('/users/:id', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
 });
 
-// Delete user by ID
-app.delete('/users/:id', (req, res) => {
-  const userIndex = users.findIndex(u => u.id === parseInt(req.params.id));
-  if (userIndex === -1) return res.status(404).send('User not found');
 
-  users.splice(userIndex, 1);
-  res.status(204).send();
+app.delete('/users/:id', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json({ message: 'User deleted' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
-app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
