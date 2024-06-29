@@ -1,7 +1,7 @@
 ## Startup
 
-- `run npm install'
-- `run npm run start'
+- run npm install
+- run npm run start
 
 ## API Documentation
 
